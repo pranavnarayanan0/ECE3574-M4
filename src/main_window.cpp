@@ -58,9 +58,11 @@ public:
 
 private:
     void check_cancelled() const {
+#ifndef AIWS_FAULT_NO_CANCEL
         if (cancelled_->load()) {
             throw BuildCancelled{};
         }
+#endif
     }
 
     std::shared_ptr<std::atomic<bool>> cancelled_;
@@ -205,7 +207,9 @@ void MainWindow::stop_worker() {
         worker_stopping_ = true;
     }
 
+#ifndef AIWS_FAULT_SILENT_SHUTDOWN
     build_ready_.notify_one();
+#endif
 
     if (build_thread_.joinable()) {
         build_thread_.join();
