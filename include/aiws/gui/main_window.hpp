@@ -4,6 +4,7 @@
 
 #include "aiws/processing_core.hpp"
 #include "aiws/workspace.hpp"
+#include "aiws/gui/corpus_lifecycle.hpp"
 
 #include <atomic>
 #include <condition_variable>
@@ -66,12 +67,11 @@ private:
     void finish_build(BuildResult& result);
 
     void update_action_states();
-    void invalidate_corpus();
     void clear_processing_outputs();
 
     Workspace workspace_;
     ProcessingCore processing_core_;
-    bool corpus_current_{false};
+    CorpusLifecycle lifecycle_;
     ExitCallback exit_callback_{nullptr};
 
     // Both threads access the pending task and stop flag under build_mutex_.
@@ -85,7 +85,6 @@ private:
     // handle so a later request cannot reset an earlier task's stop flag.
     std::shared_ptr<std::atomic<bool>> build_cancelled_;
 
-    bool build_running_{false};
     std::uint64_t workspace_version_{0};
     int build_delay_ms_{0};
     bool exit_pending_{false};

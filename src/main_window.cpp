@@ -34,7 +34,7 @@ namespace {
 
 class BuildCancelled final : public std::exception {};
 
-// ProcessingCore calls the chunking strategy once per document.
+// ProcessingCore calls this strategy once per document.
 class CancellableChunker final : public ChunkingStrategy {
 public:
     CancellableChunker(std::shared_ptr<std::atomic<bool>> cancelled,
@@ -179,7 +179,7 @@ void MainWindow::worker_loop() {
             task.swap(pending_build_);
         }
 
-        // Release the handoff mutex before processing the workspace.
+        // The mutex is released before processing the workspace.
         task();
     }
 }
@@ -195,7 +195,6 @@ void MainWindow::cancel_build() {
     }
 
     build_cancelled_.reset();
-    build_running_ = false;
 }
 
 void MainWindow::stop_worker() {
@@ -219,6 +218,7 @@ void MainWindow::request_shutdown() {
     }
 
     exit_pending_ = true;
+    lifecycle_.exit();
     stop_worker();
     QApplication::quit();
 }
@@ -261,17 +261,23 @@ bool MainWindow::add_document_file(const QString& path) {
     workspace_.add_document(std::move(document));
     workspace_widget_->add_document(info.fileName());
 
-    const bool was_building = build_running_;
-    invalidate_corpus();
+    // Building and Current give different explanations for the same Add.
+    const QString status = QString::fromLatin1(lifecycle_.added_message());
+    const QString corpus = QString::fromLatin1(lifecycle_.corpus_after_add());
 
-    status_label_->setText(
-        was_building ? "Workspace changed during build. Rebuild required."
-                     : "Document added.");
+    cancel_build();
+    ++workspace_version_;
+    lifecycle_.document_added();
+
+    workspace_widget_->set_corpus_status(corpus);
+    clear_processing_outputs();
+    update_action_states();
+    status_label_->setText(status);
     return true;
 }
 
 void MainWindow::build_corpus() {
-    if (exit_pending_ || workspace_.documents().empty() || build_running_) {
+    if (!lifecycle_.can_build()) {
         return;
     }
 
@@ -316,8 +322,8 @@ void MainWindow::build_corpus() {
             return;
         }
 
-        // A workspace change can arrive after completion is queued.
-        // Check the request again on the GUI thread before accepting it.
+        // This callback runs on the GUI thread. Add or Reset could have
+        // invalidated this request while the callback was in Qt's queue.
         QMetaObject::invokeMethod(
             this,
             [this, result, cancelled] {
@@ -329,8 +335,7 @@ void MainWindow::build_corpus() {
     };
 
     build_cancelled_ = cancelled;
-    build_running_ = true;
-    corpus_current_ = false;
+    lifecycle_.request_build();
 
     clear_processing_outputs();
     update_action_states();
@@ -346,23 +351,25 @@ void MainWindow::build_corpus() {
 }
 
 void MainWindow::finish_build(BuildResult& result) {
-    if (exit_pending_ || result.version != workspace_version_) {
+    if (!lifecycle_.is_building() || result.version != workspace_version_) {
         return;
     }
 
     build_cancelled_.reset();
-    build_running_ = false;
 
     if (!result.core) {
-        invalidate_corpus();
+        lifecycle_.build_failed();
+        workspace_widget_->set_corpus_status("Corpus: Not built");
+        clear_processing_outputs();
+        update_action_states();
+        status_label_->setText("Corpus build failed.");
         QMessageBox::warning(this, "Build Failed",
                              QString::fromStdString(result.error));
-        status_label_->setText("Corpus build failed.");
         return;
     }
 
     processing_core_ = std::move(*result.core);
-    corpus_current_ = true;
+    lifecycle_.build_succeeded();
 
     workspace_widget_->set_corpus_status(
         "Corpus: " +
@@ -390,7 +397,7 @@ void MainWindow::document_selected(int row) {
 }
 
 void MainWindow::search_requested(const QString& query, int k) {
-    if (!corpus_current_ || query.trimmed().isEmpty()) {
+    if (!lifecycle_.can_search() || query.trimmed().isEmpty()) {
         return;
     }
 
@@ -406,7 +413,8 @@ void MainWindow::search_requested(const QString& query, int k) {
             " results.");
     }
     catch (const std::exception& e) {
-        QMessageBox::warning(this, "Search Failed", QString::fromUtf8(e.what()));
+        QMessageBox::warning(this, "Search Failed",
+                             QString::fromUtf8(e.what()));
     }
 }
 
@@ -416,7 +424,7 @@ void MainWindow::query_changed(const QString& query) {
 }
 
 void MainWindow::build_context_requested(int token_budget) {
-    if (!corpus_current_ || !search_widget_->has_query()) {
+    if (!lifecycle_.can_search() || !search_widget_->has_query()) {
         return;
     }
 
@@ -430,7 +438,8 @@ void MainWindow::build_context_requested(int token_budget) {
         status_label_->setText("Context built successfully.");
     }
     catch (const std::exception& e) {
-        QMessageBox::warning(this, "Context Failed", QString::fromUtf8(e.what()));
+        QMessageBox::warning(this, "Context Failed",
+                             QString::fromUtf8(e.what()));
     }
 }
 
@@ -449,8 +458,8 @@ void MainWindow::source_document_requested(const QString& document_id) {
 }
 
 void MainWindow::term_inspection_requested(const QString& term,
-                                          const QString& chunk_id) {
-    if (!corpus_current_ || term.trimmed().isEmpty()) {
+                                           const QString& chunk_id) {
+    if (!lifecycle_.can_search() || term.trimmed().isEmpty()) {
         return;
     }
 
@@ -485,12 +494,14 @@ void MainWindow::reset_application() {
         return;
     }
 
-    const bool was_building = build_running_;
+    const QString status = QString::fromLatin1(lifecycle_.reset_message());
+
     cancel_build();
     ++workspace_version_;
+    lifecycle_.reset();
+
     workspace_.clear();
     processing_core_ = ProcessingCore{};
-    corpus_current_ = false;
 
     Resettable* widgets[] = {
         workspace_widget_,
@@ -504,9 +515,7 @@ void MainWindow::reset_application() {
     }
 
     update_action_states();
-    status_label_->setText(
-        was_building ? "Workspace changed during build. Rebuild required."
-                     : "Application reset.");
+    status_label_->setText(status);
 }
 
 void MainWindow::exit_application() {
@@ -516,29 +525,13 @@ void MainWindow::exit_application() {
 }
 
 void MainWindow::update_action_states() {
-    const bool has_documents = !workspace_.documents().empty();
-    const bool can_process = corpus_current_ && search_widget_->has_query();
+    const bool current = lifecycle_.can_search();
+    const bool can_process = current && search_widget_->has_query();
 
-    workspace_widget_->set_build_corpus_enabled(
-        has_documents && !build_running_);
+    workspace_widget_->set_build_corpus_enabled(lifecycle_.can_build());
     search_widget_->set_search_enabled(can_process);
-    term_inspector_widget_->set_inspection_enabled(corpus_current_);
+    term_inspector_widget_->set_inspection_enabled(current);
     context_widget_->set_build_context_enabled(can_process);
-}
-
-void MainWindow::invalidate_corpus() {
-    cancel_build();
-    ++workspace_version_;
-
-    const bool was_current = corpus_current_;
-    corpus_current_ = false;
-
-    workspace_widget_->set_corpus_status(
-        was_current ? "Corpus: Stale (rebuild required)"
-                    : "Corpus: Not built");
-
-    clear_processing_outputs();
-    update_action_states();
 }
 
 void MainWindow::clear_processing_outputs() {
