@@ -1,4 +1,45 @@
-﻿commit df9c35f058feb1a8355f0ec244e05b28d7d0c1ae
+commit 535e0f6a45c5ed832010db3af04c8d72f98301a7 (HEAD -> m5)
+Author: Pranav Narayanan <Pranavnar0@vt.edu>
+Date:   2026-11-23 22:26:33 -0500
+
+    Add fault switches and test cancellation and idle shutdown
+
+ src/main_window.cpp     |   4 ++
+ tests/student_tests.cpp | 178 +++++++++++++++++++++++++++++++++++++++---------
+ 2 files changed, 148 insertions(+), 34 deletions(-)
+
+commit 600aa0663ce91aebce69482ba224f4fab69af890
+Author: Pranav Narayanan <Pranavnar0@vt.edu>
+Date:   2026-11-23 21:59:59 -0500
+
+    Use the State pattern for the corpus lifecycle
+
+ include/aiws/gui/corpus_lifecycle.hpp | 137 ++++++++++++++++++++++++++++++++++
+ include/aiws/gui/main_window.hpp      |   5 +-
+ src/main_window.cpp                   |  91 +++++++++++-----------
+ 3 files changed, 181 insertions(+), 52 deletions(-)
+
+commit 1e06f5d741aab1bb4aa72803d5bb14d35d5c5270
+Author: Pranav Narayanan <Pranavnar0@vt.edu>
+Date:   2026-11-23 21:42:19 -0500
+
+    Reuse the build worker and cancel outdated corpus builds
+
+ CMakeLists.txt                   |  12 +-
+ include/aiws/gui/main_window.hpp | 148 +++--------
+ src/main_window.cpp              | 539 ++++++++++++++++++---------------------
+ 3 files changed, 278 insertions(+), 421 deletions(-)
+
+commit cedf6e1ba4ead8b371648c3e40cbafea85317753 (origin/main, main)
+Author: Pranav Narayanan <Pranavnar0@vt.edu>
+Date:   2026-11-08 23:09:04 -0500
+
+    Fix history text encoding
+
+ HISTORY.txt | Bin 5860 -> 3184 bytes
+ 1 file changed, 0 insertions(+), 0 deletions(-)
+
+commit df9c35f058feb1a8355f0ec244e05b28d7d0c1ae
 Author: Pranav Narayanan <Pranavnar0@vt.edu>
 Date:   2026-11-08 23:07:29 -0500
 
